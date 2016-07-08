@@ -6,7 +6,7 @@
 
 var _ = require('lodash'),
     fs = require('fs'),
-    passport = require('passport'),
+    psjon = require('./../../package.json'),
     auth = require('./../auth/index'),
     path = require('path'),
     settings = require('./../config');
@@ -15,9 +15,7 @@ module.exports = function() {
 
     var app = this.app,
         core = this.core,
-        middlewares = this.middlewares,
-        models = this.models,
-        User = models.user;
+        middlewares = this.middlewares;
 
     core.on('account:update', function(data) {
         app.io.emit('users:update', data.user);
@@ -29,7 +27,8 @@ module.exports = function() {
     app.get('/', middlewares.requireLogin.redirect, function(req, res) {
         res.render('chat.html', {
             account: req.user,
-            settings: settings
+            settings: settings,
+            version: psjon.version
         });
     });
 
@@ -50,31 +49,31 @@ module.exports = function() {
         res.redirect('/login');
     });
 
-    app.post('/account/login', function(req, res) {
+    app.post('/account/login', function(req) {
         req.io.route('account:login');
     });
 
-    app.post('/account/register', function(req, res) {
+    app.post('/account/register', function(req) {
         req.io.route('account:register');
     });
 
-    app.get('/account', middlewares.requireLogin, function(req, res) {
+    app.get('/account', middlewares.requireLogin, function(req) {
         req.io.route('account:whoami');
     });
 
-    app.post('/account/profile', middlewares.requireLogin, function(req, res) {
+    app.post('/account/profile', middlewares.requireLogin, function(req) {
         req.io.route('account:profile');
     });
 
-    app.post('/account/settings', middlewares.requireLogin, function(req, res) {
+    app.post('/account/settings', middlewares.requireLogin, function(req) {
         req.io.route('account:settings');
     });
 
-    app.post('/account/token/generate', middlewares.requireLogin, function(req, res) {
+    app.post('/account/token/generate', middlewares.requireLogin, function(req) {
         req.io.route('account:generate_token');
     });
 
-    app.post('/account/token/revoke', middlewares.requireLogin, function(req, res) {
+    app.post('/account/token/revoke', middlewares.requireLogin, function(req) {
         req.io.route('account:revoke_token');
     });
 
@@ -110,7 +109,7 @@ module.exports = function() {
             });
         },
         settings: function(req, res) {
-            if (req.user.using_token) {
+            if (req.user.usingToken) {
                 return res.status(403).json({
                     status: 'error',
                     message: 'Cannot change account settings ' +
@@ -129,7 +128,7 @@ module.exports = function() {
                         form.confirmPassword
                 };
 
-            auth.authenticate(req.user.uid || req.user.username,
+            auth.authenticate(req, req.user.uid || req.user.username,
                               data.currentPassword, function(err, user) {
                 if (err) {
                     return res.status(400).json({
@@ -160,7 +159,7 @@ module.exports = function() {
             });
         },
         generate_token: function(req, res) {
-            if (req.user.using_token) {
+            if (req.user.usingToken) {
                 return res.status(403).json({
                     status: 'error',
                     message: 'Cannot generate a new token ' +
@@ -185,7 +184,7 @@ module.exports = function() {
             });
         },
         revoke_token: function(req, res) {
-            if (req.user.using_token) {
+            if (req.user.usingToken) {
                 return res.status(403).json({
                     status: 'error',
                     message: 'Cannot revoke token ' +
@@ -222,6 +221,16 @@ module.exports = function() {
 
             var fields = req.body || req.data;
 
+            // Sanity check the password
+            var passwordConfirm = fields.passwordConfirm || fields.passwordconfirm || fields['password-confirm'];
+
+            if (fields.password !== passwordConfirm) {
+                return res.status(400).json({
+                    status: 'error',
+                    message: 'Password not confirmed'
+                });
+            }
+
             var data = {
                 provider: 'local',
                 username: fields.username,
@@ -232,7 +241,7 @@ module.exports = function() {
                 displayName: fields.displayName || fields.displayname || fields['display-name']
             };
 
-            core.account.create('local', data, function(err, user) {
+            core.account.create('local', data, function(err) {
                 if (err) {
                     var message = 'Sorry, we could not process your request';
                     // User already exists
@@ -263,8 +272,7 @@ module.exports = function() {
             });
         },
         login: function(req, res) {
-            auth.authenticate(req.body.username, req.body.password,
-                                                 function(err, user, info) {
+            auth.authenticate(req, function(err, user, info) {
                 if (err) {
                     return res.status(400).json({
                         status: 'error',

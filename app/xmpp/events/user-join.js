@@ -1,7 +1,6 @@
 'use strict';
 
-var Stanza = require('node-xmpp-core').Stanza,
-    helper = require('./../helper'),
+var Presence = require('node-xmpp-server').Presence,
     EventListener = require('./../event-listener');
 
 module.exports = EventListener.extend({
@@ -12,20 +11,24 @@ module.exports = EventListener.extend({
         var connections = this.getConnectionsForRoom(data.roomId);
 
         connections.forEach(function(connection) {
-            var presence = new Stanza.Presence({
-                to: helper.getRoomJid(data.roomSlug, connection.user.username),
-                from: helper.getRoomJid(data.roomSlug, data.username)
+            var presence = new Presence({
+                to: connection.jid(data.roomSlug),
+                from: connection.getRoomJid(data.roomSlug, data.username)
             });
 
             presence
             .c('x', {
-                xmlns:'http://jabber.org/protocol/muc#user'
+                xmlns: 'http://jabber.org/protocol/muc#user'
             })
             .c('item', {
-                jid: helper.getUserJid(data.username),
+                jid: connection.getUserJid(data.username),
                 affiliation: 'none',
                 role: 'participant'
             });
+
+            if (data.user) {
+                connection.populateVcard(presence, data.user, this.core);
+            }
 
             this.send(connection, presence);
         }, this);

@@ -39,6 +39,10 @@
                 rooms: this.client.rooms,
                 client: this.client
             });
+            this.hotKeys = new window.LCB.HotKeysView({
+                rooms: this.client.rooms,
+                client: this.client
+            });
             this.status = new window.LCB.StatusView({
                 el: this.$el.find('.lcb-status-indicators'),
                 client: this.client
@@ -47,14 +51,17 @@
                 el: this.$el.find('.lcb-account-button'),
                 model: this.client.user
             });
-            this.notifications = new window.LCB.NotificationsView();
-
+            this.desktopNotifications = new window.LCB.DesktopNotificationsView({
+                rooms: this.client.rooms,
+                client: this.client
+            });
             if (this.client.options.filesEnabled) {
                 this.upload = new window.LCB.UploadView({
                     el: this.$el.find('#lcb-upload'),
                     rooms: this.client.rooms
                 });
             }
+
             //
             // Modals
             //
@@ -68,6 +75,12 @@
             });
             this.tokenModal = new window.LCB.AuthTokensModalView({
                 el: this.$el.find('#lcb-tokens')
+            });
+            this.notificationsModal = new window.LCB.NotificationsModalView({
+                el: this.$el.find('#lcb-notifications')
+            });
+            this.giphyModal = new window.LCB.GiphyModalView({
+                el: this.$el.find('#lcb-giphy')
             });
             //
             // Misc

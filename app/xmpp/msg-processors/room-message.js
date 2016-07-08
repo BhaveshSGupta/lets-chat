@@ -1,8 +1,7 @@
 'use strict';
 
 var _ = require('lodash'),
-    MessageProcessor = require('./../msg-processor'),
-    settings = require('./../../config');
+    MessageProcessor = require('./../msg-processor');
 
 var mentionPattern = /^([a-z0-9_]+\:)\B/;
 
@@ -26,6 +25,10 @@ module.exports = MessageProcessor.extend({
         }
 
         this.core.rooms.slug(roomSlug, function(err, room) {
+            if (err) {
+                return cb(err);
+            }
+
             if (!room) {
                 return cb();
             }
@@ -49,13 +52,16 @@ module.exports = MessageProcessor.extend({
             var options = {
                 owner: this.client.user._id,
                 room: room._id,
-                text: text
+                text: text,
+                data: {
+                    id: this.request.attrs.id
+                }
             };
 
-            this.core.messages.create(options, function(err, message) {
+            this.core.messages.create(options, function(err) {
                 // Message will be sent by listener
                 cb(err);
-            }.bind(this));
+            });
 
         }.bind(this));
     }

@@ -1,6 +1,7 @@
+'use strict';
+
 var _ = require('lodash'),
     async = require('async'),
-    express = require('express.oi'),
     cookieParser = require('cookie-parser'),
     mongoose = require('mongoose'),
     passport = require('passport'),
@@ -8,7 +9,9 @@ var _ = require('lodash'),
     BearerStrategy = require('passport-http-bearer'),
     BasicStrategy = require('passport-http').BasicStrategy,
     settings = require('./../config'),
-    providerSettings = {},
+    plugins = require('./../plugins');
+
+var providerSettings = {},
     MAX_AUTH_DELAY_TIME = 24 * 60 * 60 * 1000,
     loginAttempts = {},
     enabledProviders = [];
@@ -20,15 +23,13 @@ function getProviders(core) {
         if (key === 'local') {
             Provider = require('./local');
         } else {
-            var pkgName = 'lets-chat-' + key;
-            var pkg = require(pkgName);
-            Provider = pkg && pkg.auth;
-            if (!Provider) {
-                throw 'Module "' + pkgName + '"" is not a auth provider';
-            }
+            Provider = plugins.getPlugin(key, 'auth');
         }
 
-        return new Provider(settings.auth[key], core);
+        return {
+            key: key,
+            provider: new Provider(settings.auth[key], core)
+        };
     });
 }
 
@@ -36,9 +37,9 @@ function setup(app, session, core) {
 
     enabledProviders = getProviders(core);
 
-    enabledProviders.forEach(function(provider) {
-        provider.setup();
-        providerSettings[provider.key] = provider.options;
+    enabledProviders.forEach(function(p) {
+        p.provider.setup();
+        providerSettings[p.key] = p.provider.options;
     });
 
     function tokenAuth(username, password, done) {
@@ -87,8 +88,8 @@ function setup(app, session, core) {
                 }
 
                 socket.request.user = user;
-                socket.request.user.logged_in = true;
-                socket.request.user.using_token = true;
+                socket.request.user.loggedIn = true;
+                socket.request.user.usingToken = true;
                 next();
             });
         } else {
@@ -123,7 +124,7 @@ function wrapAuthCallback(username, cb) {
             attempt.attempts++;
 
             if (attempt.attempts >= settings.auth.throttling.threshold) {
-                var lock = Math.min(5000 * Math.pow(2,(attempt.attempts - settings.auth.throttling.threshold), MAX_AUTH_DELAY_TIME));
+                var lock = Math.min(5000 * Math.pow(2, (attempt.attempts - settings.auth.throttling.threshold), MAX_AUTH_DELAY_TIME));
                 attempt.lockedUntil = Date.now() + lock;
                 return cb(err, user, {
                     locked: true,
@@ -143,8 +144,44 @@ function wrapAuthCallback(username, cb) {
     };
 }
 
-function authenticate(username, password, cb) {
+function authenticate() {
+    var req, username, cb;
+
+    if (arguments.length === 4) {
+        username = arguments[1];
+
+    } else if (arguments.length === 3) {
+        username = arguments[0];
+
+    } else {
+        username = arguments[0].body.username;
+    }
+
     username = username.toLowerCase();
+
+    if (arguments.length === 4) {
+        req = _.extend({}, arguments[0], {
+            body: {
+                username: username,
+                password: arguments[2]
+            }
+        });
+        cb = arguments[3];
+
+    } else if (arguments.length === 3) {
+        req = {
+            body: {
+                username: username,
+                password: arguments[1]
+            }
+        };
+        cb = arguments[2];
+
+    } else {
+        req = _.extend({}, arguments[0]);
+        req.body.username = username;
+        cb = arguments[1];
+    }
 
     checkIfAccountLocked(username, function(locked) {
         if (locked) {
@@ -159,14 +196,8 @@ function authenticate(username, password, cb) {
             cb = wrapAuthCallback(username, cb);
         }
 
-        var req = {
-            body: {
-                username: username,
-                password: password
-            }
-        };
-
-        var series = enabledProviders.map(function(provider) {
+        var series = enabledProviders.map(function(p) {
+            var provider = p.provider;
             return function() {
                 var args = Array.prototype.slice.call(arguments);
                 var callback = args.slice(args.length - 1)[0];
@@ -175,7 +206,7 @@ function authenticate(username, password, cb) {
                     return callback(null, args[0]);
                 }
 
-                provider.authenticate(req, function(err, user, info) {
+                provider.authenticate(req, function(err, user) {
                     if (err) {
                         return callback(err);
                     }

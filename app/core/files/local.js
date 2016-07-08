@@ -1,3 +1,5 @@
+'use strict';
+
 var fs = require('fs'),
     path = require('path');
 
@@ -19,7 +21,7 @@ LocalFiles.prototype.save = function(options, callback) {
         filePath = fileFolder + '/' + encodeURIComponent(doc.name),
         newPath = this.options.dir + '/' + fileFolder;
 
-    this.moveFile(file.path, newPath, function(err) {
+    this.copyFile(file.path, newPath, function(err) {
 
         if (err) {
             return callback(err);
@@ -31,7 +33,7 @@ LocalFiles.prototype.save = function(options, callback) {
     });
 };
 
-LocalFiles.prototype.moveFile = function(path, newPath, callback) {
+LocalFiles.prototype.copyFile = function(path, newPath, callback) {
     fs.readFile(path, function(err, data) {
         if (err) {
             return callback(err);

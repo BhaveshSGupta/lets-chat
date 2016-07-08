@@ -4,10 +4,15 @@
 
 'use strict';
 
+process.title = 'letschat';
+
+require('colors');
+
 var _ = require('lodash'),
+    path = require('path'),
     fs = require('fs'),
-    colors = require('colors'),
     express = require('express.oi'),
+    i18n = require('i18n'),
     bodyParser = require('body-parser'),
     cookieParser = require('cookie-parser'),
     compression = require('compression'),
@@ -16,19 +21,19 @@ var _ = require('lodash'),
     nunjucks = require('nunjucks'),
     mongoose = require('mongoose'),
     migroose = require('./migroose'),
-    MongoStore = require('connect-mongo')(express.session),
-    all = require('require-tree');
-
-var psjon = require('./package.json'),
+    connectMongo = require('connect-mongo/es5'),
+    all = require('require-tree'),
+    psjon = require('./package.json'),
     settings = require('./app/config'),
-    httpEnabled = settings.http && settings.http.enable,
-    httpsEnabled = settings.https && settings.https.enable;
+    auth = require('./app/auth/index'),
+    core = require('./app/core/index');
 
-var auth = require('./app/auth/index'),
-    models = all('./app/models'),
-    middlewares = all('./app/middlewares'),
-    controllers = all('./app/controllers'),
-    core = require('./app/core/index'),
+var MongoStore = connectMongo(express.session),
+    httpEnabled = settings.http && settings.http.enable,
+    httpsEnabled = settings.https && settings.https.enable,
+    models = all(path.resolve('./app/models')),
+    middlewares = all(path.resolve('./app/middlewares')),
+    controllers = all(path.resolve('./app/controllers')),
     app;
 
 //
@@ -74,7 +79,6 @@ app.io.session(session);
 auth.setup(app, session, core);
 
 // Security protections
-app.use(helmet.crossdomain());
 app.use(helmet.frameguard());
 app.use(helmet.hidePoweredBy());
 app.use(helmet.ieNoOpen());
@@ -94,16 +98,14 @@ app.use(helmet.contentSecurityPolicy({
     fontSrc: ['\'self\'', 'fonts.gstatic.com'],
     mediaSrc: ['\'self\''],
     objectSrc: ['\'self\''],
-    imgSrc: ['*']
+    imgSrc: ['* data:']
 }));
 
 var bundles = {};
 app.use(require('connect-assets')({
     paths: [
         'media/js',
-        'media/less',
-        // 'media/img',
-        // 'media/font',
+        'media/less'
     ],
     helperContext: bundles,
     build: settings.env === 'production',
@@ -113,31 +115,56 @@ app.use(require('connect-assets')({
 
 // Public
 app.use('/media', express.static(__dirname + '/media', {
-    maxAge: '364d',
+    maxAge: '364d'
 }));
 
 // Templates
 var nun = nunjucks.configure('templates', {
-        autoescape: true,
-        express: app,
-        tags: {
-            blockStart: '<%',
-            blockEnd: '%>',
-            variableStart: '<$',
-            variableEnd: '$>',
-            commentStart: '<#',
-            commentEnd: '#>'
-        }
-    });
+    autoescape: true,
+    express: app,
+    tags: {
+        blockStart: '<%',
+        blockEnd: '%>',
+        variableStart: '<$',
+        variableEnd: '$>',
+        commentStart: '<#',
+        commentEnd: '#>'
+    }
+});
 
-nun.addFilter('js', bundles.js);
-nun.addFilter('css', bundles.css);
+function wrapBundler(func) {
+    // This method ensures all assets paths start with "./"
+    // Making them relative, and not absolute
+    return function() {
+        return func.apply(func, arguments)
+                   .replace(/href="\//g, 'href="./')
+                   .replace(/src="\//g, 'src="./');
+    };
+}
+
+nun.addFilter('js', wrapBundler(bundles.js));
+nun.addFilter('css', wrapBundler(bundles.css));
+nun.addGlobal('text_search', false);
+
+// i18n
+i18n.configure({
+    directory: path.resolve(__dirname, './locales'),
+    locales: settings.i18n.locales || settings.i18n.locale,
+    defaultLocale: settings.i18n.locale
+});
+app.use(i18n.init);
 
 // HTTP Middlewares
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({
     extended: true
 }));
+
+// IE header
+app.use(function(req, res, next) {
+    res.setHeader('X-UA-Compatible', 'IE=Edge,chrome=1');
+    next();
+});
 
 //
 // Controllers
@@ -173,6 +200,11 @@ function startApp() {
     var port = httpsEnabled && settings.https.port ||
                httpEnabled && settings.http.port;
 
+    var host = httpsEnabled && settings.https.host ||
+               httpEnabled && settings.http.host || '0.0.0.0';
+
+
+
     if (httpsEnabled && httpEnabled) {
         // Create an HTTP -> HTTPS redirect server
         var redirectServer = express();
@@ -180,10 +212,11 @@ function startApp() {
             var urlPort = port === 80 ? '' : ':' + port;
             res.redirect('https://' + req.hostname + urlPort + req.path);
         });
-        http.createServer(redirectServer).listen(settings.http.port || 5000);
+        http.createServer(redirectServer)
+            .listen(settings.http.port || 5000, host);
     }
 
-    app.listen(port);
+    app.listen(port, host);
 
     //
     // XMPP
@@ -197,18 +230,54 @@ function startApp() {
     console.log('\n' + art + '\n\n' + 'Release ' + psjon.version.yellow + '\n');
 }
 
+function checkForMongoTextSearch() {
+    if (!mongoose.mongo || !mongoose.mongo.Admin) {
+        // MongoDB API has changed, assume text search is enabled
+        nun.addGlobal('text_search', true);
+        return;
+    }
+
+    var admin = new mongoose.mongo.Admin(mongoose.connection.db);
+    admin.buildInfo(function (err, info) {
+        if (err || !info) {
+            return;
+        }
+
+        var version = info.version.split('.');
+        if (version.length < 2) {
+            return;
+        }
+
+        if(version[0] < 2) {
+            return;
+        }
+
+        if(version[0] === '2' && version[1] < 6) {
+            return;
+        }
+
+        nun.addGlobal('text_search', true);
+    });
+}
+
 mongoose.connect(settings.database.uri, function(err) {
     if (err) {
         throw err;
     }
 
-    migroose.needsMigration(function(migrationRequired) {
-        if (migrationRequired) {
+    checkForMongoTextSearch();
+
+    migroose.needsMigration(function(err, migrationRequired) {
+        if (err) {
+            console.error(err);
+        }
+
+        else if (migrationRequired) {
             console.log('Database migration required'.red);
             console.log('Ensure you backup your database first.');
             console.log('');
             console.log(
-                'Run the following command: ' + 'npm run-script migrate'.yellow
+                'Run the following command: ' + 'npm run migrate'.yellow
             );
 
             return process.exit();
